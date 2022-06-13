@@ -1,0 +1,535 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © WyO
+
+//@version=4
+
+
+///FUNDAMENTAL
+
+
+strategy("Scalping in the MATRIX", shorttitle = "MATRIX Scalper")
+
+//Inputs
+o_snb = "Purple and Blue"
+o_snp = "Purple Only"
+o_pb = "Position Building"
+o_sl = "Smart Stop Loss"
+o_bcs = "Opposite Band Cross"
+o_bcb = "Opposite Band Crossback"
+o_close = "close"
+o_high = "high"
+o_low = "low"
+o_ema5 = "5 EMA"
+o_ema13 = "13 EMA"
+o_ema21 = "21 EMA"
+o_ema50 = "50 EMA"
+o_ml = "Market Line"
+
+resolution = input('1', group = "Strategy Parameters", title = "Strategy Resolution", type = input.resolution)
+ef_snowflakes = input(o_snb, group = "Strategy Parameters", title = "Snowflakes To Track", type = input.string, options = [o_snb, o_snp])
+loss_mitigation = input(o_pb, group = "Strategy Parameters", title = "Loss Mitigation Method", type = input.string, options = [o_pb, o_sl])
+single_position_exit = input(o_bcs, group = "Strategy Parameters", title = "Exit Method /w a Single Position", type = input.string, options = [o_bcs, o_bcb, o_ema50])
+ef_pb_blue = input(false, group = "Strategy Parameters", title = "Add on Blue Snowflakes", type = input.bool)
+ema50_long_exit = input(o_close, group = "Strategy Parameters", title = "EMA 50 Long Exit On Candle:", type = input.string, options = [o_close, o_high])
+ema50_short_exit = input(o_close, group = "Strategy Parameters", title = "EMA 50 Short Exit On Candle:", type = input.string, options = [o_close, o_low])
+ema200_long_exit = input(o_close, group = "Strategy Parameters", title = "EMA 200 Long Exit On Candle:", type = input.string, options = [o_close, o_high])
+ema200_short_exit = input(o_close, group = "Strategy Parameters", title = "EMA 200 Short Exit On Candle:", type = input.string, options = [o_close, o_low])
+emas_extra_check = input(false, group = "Strategy Parameters", title = "Extra EMAs Confluence For Entries", type = input.bool)
+extra_ema_a = input(o_ema5, group = "Strategy Parameters", title = "Extra EMA #1:", type = input.string, options = [o_ema5, o_ema13])
+extra_ema_b = input(o_ema13, group = "Strategy Parameters", title = "Extra EMA #2:", type = input.string, options = [o_ema13, o_ema21])
+emas_long_entry = input(o_close, group = "Strategy Parameters", title = "EMAs Check Long Entry On Candle:", type = input.string, options = [o_close, o_high])
+emas_short_entry = input(o_close, group = "Strategy Parameters", title = "EMAs Check Short Entry On Candle:", type = input.string, options = [o_close, o_low])
+tp = input(true, group = "Strategy Parameters", title = "Take Profit On", type = input.bool)
+tp1_perc = input(50, group = "Strategy Parameters", title = "Take Profit 1 Percentage", type = input.integer)
+//tp2_perc = input(50, group = "Strategy Parameters", title = "Take Profit 2 Percentage", type = input.integer)
+tp1_target = input(o_ml, group = "Strategy Parameters", title = "Take Profit 1 Target", type = input.string, options = [o_ml, o_ema50])
+
+
+///EBB & FLOW
+
+
+//Inputs
+
+i_src = input(close, group = "EBB Settings", title = "EMA BB Source", type = input.source)
+i_bbdev = input(1.6182, group = "EBB Settings", title = "Stdev Factor", type = input.float)
+
+i_ema1 = input(13, group = "EMAs", title = "EMA #1", type = input.integer)
+i_ema2 = input(21, group = "EMAs", title = "EMA #2", type = input.integer)
+i_ema3 = input(50, group = "EMAs", title = "EMA #3", type = input.integer)
+i_ema4 = input(200, group = "EMAs", title = "EMA #4", type = input.integer)
+
+//Code & Signals
+
+f_ebb(_len) =>
+    basis = ema(i_src, _len)
+    dev = stdev(i_src, _len) * i_bbdev
+    [basis + dev, basis - dev]
+
+
+[ebb1_upper, ebb1_lower] = f_ebb(i_ema1)
+[ebb2_upper, ebb2_lower] = f_ebb(i_ema2)
+[ebb3_upper, ebb3_lower] = f_ebb(i_ema3)
+[ebb4_upper, ebb4_lower] = f_ebb(i_ema4)
+
+
+flow_down1 = low < ebb1_lower
+flow_down2 = flow_down1 and low < ebb2_lower
+flow_down3 = flow_down2 and low < ebb3_lower
+flow_down4 = flow_down3 and low < ebb4_lower
+
+flow_up1 = high > ebb1_upper
+flow_up2 = flow_up1 and high > ebb2_upper
+flow_up3 = flow_up2 and high > ebb3_upper
+flow_up4 = flow_up3 and high > ebb4_upper
+
+
+///PVSRA
+
+pvlength = 10
+rising_factor = 1.5
+climax_factor = 2
+
+above_average = false
+
+lookback = 200
+use_mmb = false
+stopping_ratio = 0.6
+vector_ratio = 1.5
+
+wick_balance = false
+wick_count = false
+wick_history = 20
+
+mtf_15m = false
+mtf_1h = false
+
+f_wick_analysis() =>
+    _wick_high = high - max(close, open)
+    _wick_low = min(close, open) - low
+    _body = abs(close - open)
+    _high_ratio = _wick_high / (high - low) //_wick_high / (_body + _wick_low)
+    _low_ratio = _wick_low / (high - low) //_wick_low / (_body + _wick_high)
+    _body_ratio = _body / (high - low) //_body / (_wick_high + _wick_low)
+    _wick_ratio = (_wick_high + _wick_low) / (high - low) //(_wick_high + _wick_low) / _body
+    _bias = _low_ratio > 0.75 ? -2 : (_low_ratio > 0.5 ? -1 : (_high_ratio > 0.75 ? 2 : (_high_ratio > 0.5 ? 1 : (_wick_ratio > 0.5 ? 0 : na))))
+    _down_weight = (_wick_low / (high - low)) * volume
+    _up_weight = (_wick_high / (high - low)) * volume
+    _down_balance = sum((_bias and _bias <= 0) ? _down_weight : 0, wick_history)
+    _up_balance = sum((_bias and _bias >= 0) ? _up_weight : 0, wick_history)
+    _down_count = sum((_bias and _bias <= 0) ? 1 : 0, wick_history)
+    _up_count = sum((_bias and _bias >= 0) ? 1 : 0, wick_history)
+    [_bias, _down_balance, _up_balance, _down_count, _up_count]
+
+f_pvsra() =>
+    _netvol = (close - open) > 0 ? volume : -volume
+    _total = sum(volume, pvlength)
+    _average = _total / pvlength
+    _vspread = volume * (high - low)
+    _vspread_high = highest(_vspread, pvlength)
+    _climax = volume >= _average * climax_factor or _vspread >= _vspread_high
+    _rising = volume >= _average * rising_factor
+    _body_to_wick = abs(close - open) / ((high - low) - (abs(close-open)))
+    [_bias, _down_balance, _up_balance, _down_count, _up_count] = f_wick_analysis()
+    _stopping = (_climax or _rising) and _body_to_wick < stopping_ratio and volume > volume[1]
+    _vector = (_climax or _rising) and _body_to_wick > vector_ratio
+    _vwspread = _vspread / volume
+    _vwspread_rank = percentrank(_vwspread, lookback)
+    _mmb = ema(sum((_climax or _rising) ? _netvol : 0, lookback), 3)
+    [_netvol, _average, _vspread, _vspread_high, _climax, _rising, close > open, _stopping, _vector, _vwspread, _vwspread_rank, _mmb, _bias, _down_balance, _up_balance, _down_count, _up_count]
+
+c_up_grey = #CCCCCC
+c_down_grey = #555555
+
+c_down_min = #911b8f // dark fuchsia
+c_down_max = #ff3f45 // bright red
+c_up_max = #35fc68 // bright lime
+c_up_min = #144cc7 // navy blue
+
+
+[netvol, average, vspread, vspread_high, climax, rising, up, stopping, vector, vwspread, vwspread_rank, mmb, bias, down_balance, up_balance, down_count, up_count] = f_pvsra()
+
+//c_up = color.from_gradient(netvol, average * rising_factor, average * climax_factor, c_up_min, c_up_max)
+//c_down = color.from_gradient(abs(netvol), average * rising_factor, average * climax_factor, c_down_min, c_down_max)
+//c_normal = color.from_gradient(netvol, -average * rising_factor, average * rising_factor, c_down_grey, c_up_grey)
+//c_notable = color.from_gradient(netvol, -average, average, #940000, #086400)
+//c_vol = (climax or rising) ? (netvol > 0 ? c_up : c_down) : ((above_average and abs(netvol) > average) ? c_notable : c_normal)
+//c_avg = color.from_gradient(netvol, -(average * climax_factor), (average * climax_factor), color.red, color.lime)
+
+//barcolor(c_vol)
+
+//plot(abs(netvol), title = "Net Volume", color = c_vol, style = plot.style_columns)
+//plot(average, title = "Average", color = c_avg, linewidth=2)
+//plotshape(vector or na, title = "Vector", color = netvol > 0 ? color.orange : color.aqua, style = shape.diamond, location = location.top)
+//plotshape(stopping or na, title = "Stopping", color = bias > 0 ? color.red : (bias < 0 ? color.lime : color.yellow), style = shape.square, location = location.top)
+
+//net_count = up_count - down_count
+//net_balance = up_balance - down_balance
+//plot(bias, title = "Wick Bias")
+//plot(net_count, title = "Wick Count (net)")
+
+//mmb_percent = percentrank(mmb, lookback)
+//c_mmb = color.from_gradient(mmb_percent, 0, 100, color.orange, color.aqua)
+//mmb_top = hline(-100, color = color.new(color.white, 100))
+//mmb_bottom = hline(-120, color = color.new(color.white, 100))
+//fill(mmb_top, mmb_bottom, c_mmb, title = "MMB")
+
+//nb_percent = percentrank(net_balance, lookback)
+//c_nb = color.from_gradient(nb_percent, 0, 100, color.red, color.lime)
+//nb_top = hline(-130, color = color.new(color.white, 100))
+//nb_bottom = hline(-150, color = color.new(color.white, 100))
+//fill(nb_top, nb_bottom, c_nb, title = "Wick Net Balance")
+
+
+///TDI /w RSI
+
+//Inputs
+
+o_sma = "SMA"
+o_ema = "EMA"
+
+rsiPeriod = input(21, minval = 1, title = "RSI Period")
+bandLength = input(34, minval = 1, title = "Band Length")
+lengthrsipl = input(9, minval = 0, title = "Fast MA on RSI")
+lengthtradesl = input(1, minval = 1, title = "Slow MA on RSI")
+maType = input(o_sma, title = "MA Type", type = input.string, options = [o_sma, o_ema])
+
+//Code & Signals
+
+src1 = close                                                                    // Source of Calculations (Close of Bar)
+r = rsi(src1, rsiPeriod)                                                       // RSI of Close
+ma = maType == o_sma ? sma(r, bandLength) : ema(r, bandLength)                // Moving Average of RSI [current]
+offs = (1.6185 * stdev(r, bandLength))                                       // Offset
+bup = ma + offs                                                             // Upper Bands
+bdn = ma - offs                                                            // Lower Bands
+mid = (bup + bdn) / 2                                                     // Average of Upper and Lower Bands
+mbb = maType == o_sma ? sma(r, lengthrsipl) : ema(r, lengthrsipl)        // Moving Average of RSI 2 bars back
+mab = maType == o_sma ? sma(r, lengthtradesl) : ema(r, lengthtradesl)   // Moving Average of RSI 7 bars back
+
+
+hline(30, color=color.red, linewidth=1, linestyle=hline.style_dotted)
+hline(50, color=color.orange, linewidth=1, linestyle=hline.style_dotted)
+hline(70, color=color.green, linewidth=1, linestyle=hline.style_dotted)
+
+// Plot the TDI
+bupl=plot(bup, color=#12bcc9, transp=60, title="VB Channel High",linewidth=2)
+bdnl=plot(bdn, color=#12bcc9, transp=60, title="VB Channel Low",linewidth=2)
+midl=plot(mid, color=color.orange, transp=40, linewidth=2, title="MBL")
+mabl=plot(mab, color=color.lime, transp=30, linewidth=2, title="RSI PL")
+mbbl=plot(mbb, color=color.red, transp=60, linewidth=2, title="TSL Signal")
+
+fill(mabl,mbbl, color=mab>mbb?color.green:color.red,transp=80)
+
+//long/short labels
+
+long1= crossover(mab, mbb) and mbb > mid and mbb > 50
+short1= crossunder(mab, mbb) and mbb < mid and mbb < 50
+
+alertcondition(long1, title='Long', message='Crossover')
+alertcondition(short1, title='Short', message='Crossunder')
+
+best_setup = crossover(mab, mid) 
+alertcondition(best_setup, title="RSI Crosses Yellow", message="rsi crosses mid")
+
+scalp= mab > mid 
+bgcolor(scalp ? color.lime : na, transp=95)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+// Divergences //
+
+
+len = input(title="RSI Period", minval=1, defval=21)
+src = input(title="RSI Source", defval=close)
+bull_src = input(title="Bullish Divergence Source", defval=low)
+bear_src = input(title="Bearish Divergence Source", defval=high)
+lbR = input(title="Pivot Lookback Right", defval=0)
+lbL = input(title="Pivot Lookback Left", defval=5)
+rangeUpper = input(title="Max of Lookback Range", defval=60)
+rangeLower = input(title="Min of Lookback Range", defval=5)
+plotBull = input(title="Plot Bullish", defval=true)
+plotHiddenBull = input(title="Plot Hidden Bullish", defval=false)
+plotBear = input(title="Plot Bearish", defval=true)
+plotHiddenBear = input(title="Plot Hidden Bearish", defval=false)
+bearColor = color.red
+bullColor = color.green
+hiddenBullColor = color.new(color.green, 80)
+hiddenBearColor = color.new(color.red, 80)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+osc = rsi(src, len)
+
+plFound = na(pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(pivothigh(osc, lbL, lbR)) ? false : true
+_inRange(cond) =>
+	bars = barssince(cond == true)
+	rangeLower <= bars and bars <= rangeUpper
+
+
+//------------------------------------------------------------------------------
+// Regular Bullish
+// Osc: Higher Low
+
+oscHL = osc[lbR] > valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Lower Low
+
+priceLL = bull_src[lbR] < valuewhen(plFound, bull_src[lbR], 1)
+bullCond = plotBull and priceLL and oscHL and plFound
+
+plot(
+     plFound ? osc[lbR] : na,
+     offset=-lbR,
+     title="Regular Bullish",
+     linewidth=2,
+     color=(bullCond ? bullColor : noneColor),
+     transp=0
+     )
+
+plotshape(
+	 bullCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bullish Label",
+	 text=" Bull ",
+	 style=shape.labelup,
+	 location=location.absolute,
+	 color=bullColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+//------------------------------------------------------------------------------
+// Hidden Bullish
+// Osc: Lower Low
+
+oscLL = osc[lbR] < valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Higher Low
+
+priceHL = bull_src[lbR] > valuewhen(plFound, bull_src[lbR], 1)
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound
+
+plot(
+	 plFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bullish",
+	 linewidth=2,
+	 color=(hiddenBullCond ? hiddenBullColor : noneColor),
+	 transp=0
+	 )
+
+plotshape(
+	 hiddenBullCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bullish Label",
+	 text=" H Bull ",
+	 style=shape.labelup,
+	 location=location.absolute,
+	 color=bullColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+//------------------------------------------------------------------------------
+// Regular Bearish
+// Osc: Lower High
+
+oscLH = osc[lbR] < valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Higher High
+
+priceHH = bear_src[lbR] > valuewhen(phFound, bear_src[lbR], 1)
+
+bearCond = plotBear and priceHH and oscLH and phFound
+
+plot(
+	 phFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bearish",
+	 linewidth=2,
+	 color=(bearCond ? bearColor : noneColor),
+	 transp=0
+	 )
+
+plotshape(
+	 bearCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bearish Label",
+	 text=" Bear ",
+	 style=shape.labeldown,
+	 location=location.absolute,
+	 color=bearColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+//------------------------------------------------------------------------------
+// Hidden Bearish
+// Osc: Higher High
+
+oscHH = osc[lbR] > valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Lower High
+
+priceLH = bear_src[lbR] < valuewhen(phFound, bear_src[lbR], 1)
+
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound
+
+plot(
+	 phFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bearish",
+	 linewidth=2,
+	 color=(hiddenBearCond ? hiddenBearColor : noneColor),
+	 transp=0
+	 )
+
+plotshape(
+	 hiddenBearCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bearish Label",
+	 text=" H Bear ",
+	 style=shape.labeldown,
+	 location=location.absolute,
+	 color=bearColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+
+///CONNECTIONS
+
+
+var long_inactive = true
+var short_inactive = true
+
+var last_price = 0.
+
+var position_building = false
+
+var tp1_ahead = true
+
+var pvsra_add_long = false
+var pvsra_add_short = false
+
+var emas_long_cond = false
+var emas_short_cond = false
+
+pvsra_entry_long = (stopping or na) and bias < 0
+pvsra_entry_short = (stopping or na) and bias > 0
+
+pvsra_add_long := ((stopping or na) and bias < 0) or ((vector or na) and netvol > 0 == false) ? true : pvsra_add_long
+pvsra_add_short := ((stopping or na) and bias > 0) or ((vector or na) and netvol < 0 == false) ? true : pvsra_add_short
+
+ef_rise = ef_pb_blue ? (flow_down4[1] and flow_down4 == false) or (flow_down3[1] and flow_down3 == false and flow_down4 == false) : flow_down4[1] and flow_down4 == false
+ef_drop = ef_pb_blue ? (flow_up4[1] and flow_up4 == false) or (flow_up3[1] and flow_up3 == false and flow_up4 == false) : flow_up4[1] and flow_up4 == false
+
+price = security(syminfo.tickerid, resolution, close)
+price_high = security(syminfo.tickerid, resolution, high)
+price_low = security(syminfo.tickerid, resolution, low)
+
+ema_50 = ema(price, 50)
+ema_200 = ema(price, 200)
+
+ema_value_a = extra_ema_a == o_ema5 ? 5 : 13
+ema_value_b = extra_ema_b == o_ema13 ? 13 : 21
+
+ema_a = ema(price, ema_value_a)
+ema_b = ema(price, ema_value_b)
+
+ema50_long_val = ema50_long_exit == o_close ? price : price_high
+ema50_short_val = ema50_short_exit == o_close ? price : price_low
+
+price_above_ema50 = ema50_long_val > ema_50
+price_below_ema50 = ema50_short_val < ema_50
+
+ema200_long_val = ema200_long_exit == o_close ? price : price_high
+ema200_short_val = ema200_short_exit == o_close ? price : price_low
+
+price_above_ema200 = ema200_long_val > ema_200
+price_below_ema200 = ema200_short_val < ema_200
+
+emas_long_cond := emas_extra_check ? (emas_long_entry == o_close ? price : price_high) < ema_a and ema_a < ema_b and ema_b < ema_50 and ema_50 < ema_200 : true
+emas_short_cond := emas_extra_check ? (emas_short_entry == o_close ? price : price_low) > ema_a and ema_a > ema_b and ema_b > ema_50 and ema_50 > ema_200 : true
+
+band_cross_up = crossover(mab, bup)
+band_cross_down = crossunder(mab, bdn)
+band_crossback_up = crossunder(mab, bup)
+band_crossback_down = crossover(mab, bdn)
+
+
+///EXECUTION
+
+
+//Long
+
+//long_cond = long_inactive and short_inactive and mab < mid and barssince(pvsra_entry_long) < 4 and ef_rise and price_below_ema50 and emas_long_cond
+long_cond = long_inactive and short_inactive and barssince(pvsra_entry_long) < 4 and ef_rise and price_below_ema50 and emas_long_cond
+//plotshape(long_cond, style=shape.labelup, location=location.bottom, color=color.lime, size=size.tiny, editable=true)
+
+if (long_cond)
+    strategy.entry("Long", strategy.long, comment="Long")
+    long_inactive := false
+    pvsra_add_long := false
+    last_price := price
+
+//if (loss_mitigation == o_pb and long_inactive == false and mab < mid and pvsra_add_long and ef_rise and price < last_price)
+if (loss_mitigation == o_pb and long_inactive == false and pvsra_add_long and ef_rise and price < last_price)
+    strategy.entry("Added Long", strategy.long, comment="Added Long", qty = strategy.position_size)
+    position_building := true
+    pvsra_add_long := false
+    last_price := price
+
+if (tp and ((tp1_target == o_ml and mab > mid) or (tp1_target == o_ema50 and price_high > ema_50)) and long_inactive == false and tp1_ahead and position_building == false)
+    strategy.close("Long", comment="Long TP", qty_percent = tp1_perc)
+    tp1_ahead := false
+    
+profit_long = strategy.position_avg_price < price
+
+long_exit = position_building ? profit_long and (price_above_ema50 or price_above_ema200) : single_position_exit == o_bcs ? band_cross_up : single_position_exit == o_bcb ? band_crossback_up : price_above_ema50
+    
+if (long_exit and long_inactive == false)
+    strategy.close("Long", comment="Long Exit", qty_percent = 100)
+    strategy.close("Added Long", comment="Long Exit", qty_percent = 100)
+    long_inactive := true
+    position_building := false
+    tp1_ahead := true
+    pvsra_add_long := false
+    pvsra_add_short := false
+
+//Short
+
+//short_cond = short_inactive and long_inactive and mab > mid and barssince(pvsra_entry_short) < 4 and ef_drop and price_above_ema50 and emas_short_cond
+short_cond = short_inactive and long_inactive and barssince(pvsra_entry_short) < 4 and ef_drop and price_above_ema50 and emas_short_cond
+//plotshape(short_cond, style=shape.labeldown, location=location.top, color=color.red, size=size.tiny, editable=true)
+
+if (short_cond)
+    strategy.entry("Short", strategy.short, comment="Short")
+    short_inactive := false
+    pvsra_add_short := false
+    last_price := price
+
+//if (loss_mitigation == o_pb and short_inactive == false and mab > mid and pvsra_add_short and ef_drop and price > last_price)
+if (loss_mitigation == o_pb and short_inactive == false and pvsra_add_short and ef_drop and price > last_price)
+    strategy.entry("Added Short", strategy.short, comment="Added Short", qty = abs(strategy.position_size))
+    position_building := true
+    pvsra_add_short := false
+    last_price := price
+
+if (tp and ((tp1_target == o_ml and mab < mid) or (tp1_target == o_ema50 and price_low < ema_50)) and short_inactive == false and tp1_ahead and position_building == false)
+    strategy.close("Short", comment="Short TP", qty_percent = tp1_perc)
+    tp1_ahead := false
+    
+profit_short = strategy.position_avg_price > price   
+    
+short_exit = position_building ? profit_short and (price_below_ema50 or price_below_ema200) : single_position_exit == o_bcs ? band_cross_down : single_position_exit == o_bcb ? band_crossback_down : price_below_ema50
+
+if (short_exit and short_inactive == false)
+    strategy.close("Short", comment="Short Exit", qty_percent = 100)
+    strategy.close("Added Short", comment="Short Exit", qty_percent = 100)
+    short_inactive := true
+    position_building := false
+    tp1_ahead := true
+    pvsra_add_short := false
+    pvsra_add_long := false

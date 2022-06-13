@@ -1,0 +1,507 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © WyO
+
+//@version=4
+
+
+///FUNDAMENTAL
+
+
+strategy("Scalping in the MATRIX", shorttitle = "MATRIX Scalper")
+
+//Inputs
+
+o_none = "Disabled"
+o_purple = "Purple Only"
+o_blue = "Purple and Blue"
+o_bcs_ema = "Opposite Band Cross/50 EMA"
+o_bcb_ema = "Opposite Band Crossback/50 EMA"
+o_bcs = "Opposite Band Cross"
+o_bcb = "Opposite Band Crossback"
+o_ema50 = "50 EMA"
+
+tdi_cross_buffer = input(1, group = "Strategy Parameters", title = "TDI Cross Buffer", type = input.float)
+tdi_cross_filter = input(false, group = "Strategy Parameters", title = "Only Clean TDI Crosses", type = input.bool)
+long_above_mid = input(false, group = "Strategy Parameters", title = "Longs Above Market Line", type = input.bool)
+short_below_mid = input(false, group = "Strategy Parameters", title = "Shorts Below Market Line", type = input.bool)
+long_above_50 = input(false, group = "Strategy Parameters", title = "Longs Above 50 EMA", type = input.bool)
+short_below_50 = input(false, group = "Strategy Parameters", title = "Shorts Below 50 EMA", type = input.bool)
+ema50_source_up = input(defval = close, group = "Strategy Parameters", title = "Price Above EMA 50 Source")
+ema50_source_down = input(defval = close, group = "Strategy Parameters", title = "Price Below EMA 50 Source")
+snowflakes_filter = input(o_none, group = "Strategy Parameters", title = "Require Snowflakes for Entries", type = input.string, options = [o_none, o_purple, o_blue])
+exit_condition = input(o_bcs_ema, group = "Strategy Parameters", title = "Exit Condition", type = input.string, options = [o_bcs_ema, o_bcb_ema, o_bcs, o_bcb, o_ema50])
+instant_sl = input(false, group = "Strategy Parameters", title = "Instant Stop Loss Activation", type = input.bool)
+atr_exit_check = input(false, group = "Strategy Parameters", title = "Consider ATR for Exits", type = input.bool)
+atr_multiplier = input(2, group = "Strategy Parameters", title = "ATR Multiplier", type = input.float)
+atr_source_up = input(defval = close, group = "Strategy Parameters", title = "ATR Source for Exits to Upside")
+atr_source_down = input(defval = close, group = "Strategy Parameters", title = "ATR Source for Exits to Downside")
+
+
+///EBB & FLOW
+
+
+//Inputs
+
+i_src = input(close, group = "EBB Settings", title = "EMA BB Source", type = input.source)
+i_bbdev = input(1.6182, group = "EBB Settings", title = "Stdev Factor", type = input.float)
+
+i_ema1 = input(13, group = "EMAs", title = "EMA #1", type = input.integer)
+i_ema2 = input(21, group = "EMAs", title = "EMA #2", type = input.integer)
+i_ema3 = input(50, group = "EMAs", title = "EMA #3", type = input.integer)
+i_ema4 = input(200, group = "EMAs", title = "EMA #4", type = input.integer)
+
+//Code & Signals
+
+f_ebb(_len) =>
+    basis = ema(i_src, _len)
+    dev = stdev(i_src, _len) * i_bbdev
+    [basis + dev, basis - dev]
+
+
+[ebb1_upper, ebb1_lower] = f_ebb(i_ema1)
+[ebb2_upper, ebb2_lower] = f_ebb(i_ema2)
+[ebb3_upper, ebb3_lower] = f_ebb(i_ema3)
+[ebb4_upper, ebb4_lower] = f_ebb(i_ema4)
+
+
+flow_down1 = low < ebb1_lower
+flow_down2 = flow_down1 and low < ebb2_lower
+flow_down3 = flow_down2 and low < ebb3_lower
+flow_down4 = flow_down3 and low < ebb4_lower
+
+flow_up1 = high > ebb1_upper
+flow_up2 = flow_up1 and high > ebb2_upper
+flow_up3 = flow_up2 and high > ebb3_upper
+flow_up4 = flow_up3 and high > ebb4_upper
+
+///TDI /w RSI
+
+//Inputs
+
+o_sma = "SMA"
+o_ema = "EMA"
+
+rsiPeriod = input(21, minval = 1, title = "RSI Period")
+bandLength = input(34, minval = 1, title = "Band Length")
+lengthrsipl = input(9, minval = 0, title = "Fast MA on RSI")
+lengthtradesl = input(1, minval = 1, title = "Slow MA on RSI")
+maType = input(o_sma, title = "MA Type", type = input.string, options = [o_sma, o_ema])
+
+//Code & Signals
+
+src1 = close                                                                    // Source of Calculations (Close of Bar)
+r = rsi(src1, rsiPeriod)                                                       // RSI of Close
+ma = maType == o_sma ? sma(r, bandLength) : ema(r, bandLength)                // Moving Average of RSI [current]
+offs = (1.6185 * stdev(r, bandLength))                                       // Offset
+bup = ma + offs                                                             // Upper Bands
+bdn = ma - offs                                                            // Lower Bands
+mid = (bup + bdn) / 2                                                     // Average of Upper and Lower Bands
+mbb = maType == o_sma ? sma(r, lengthrsipl) : ema(r, lengthrsipl)        // Moving Average of RSI 2 bars back
+mab = maType == o_sma ? sma(r, lengthtradesl) : ema(r, lengthtradesl)   // Moving Average of RSI 7 bars back
+
+
+hline(30, color=color.red, linewidth=1, linestyle=hline.style_dotted)
+hline(50, color=color.orange, linewidth=1, linestyle=hline.style_dotted)
+hline(70, color=color.green, linewidth=1, linestyle=hline.style_dotted)
+
+// Plot the TDI
+upl=plot(bup, color=#12bcc9, transp=60, title="VB Channel High",linewidth=2)
+dnl=plot(bdn, color=#12bcc9, transp=60, title="VB Channel Low",linewidth=2)
+midl=plot(mid, color=color.orange, transp=40, linewidth=2, title="MBL")
+mabl=plot(mab, color=color.lime, transp=30, linewidth=2, title="RSI PL")
+mbbl=plot(mbb, color=color.red, transp=60, linewidth=2, title="TSL Signal")
+
+//
+//create RSI TSL cloud to indicate trend direction.
+
+fill(mabl,mbbl, color=mab>mbb?color.green:color.red,transp=80)
+
+// fill(upl, midl, color.green, transp=95)                                   
+// fill(midl, dnl, color.red, transp=95)        
+
+
+//long/short labels
+
+long1= crossover(mab, mbb) and mbb > mid and mbb > 50
+short1= crossunder(mab, mbb) and mbb < mid and mbb < 50
+
+//plotshape(long1, style=shape.labelup, location=location.bottom, color=color.lime, size=size.tiny, editable=true)
+//plotshape(short1, style=shape.labeldown, location=location.top, color=color.red, size=size.tiny, editable=true)
+
+alertcondition(long1, title='Long', message='Crossover')
+alertcondition(short1, title='Short', message='Crossunder')
+
+best_setup = crossover(mab, mid) 
+alertcondition(best_setup, title="RSI Crosses Yellow", message="rsi crosses mid")
+
+scalp= mab > mid 
+bgcolor(scalp ? color.lime : na, transp=95)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+// Divergences //
+
+
+len = input(title="RSI Period", minval=1, defval=21)
+src = input(title="RSI Source", defval=close)
+bull_src = input(title="Bullish Divergence Source", defval=low)
+bear_src = input(title="Bearish Divergence Source", defval=high)
+lbR = input(title="Pivot Lookback Right", defval=0)
+lbL = input(title="Pivot Lookback Left", defval=5)
+rangeUpper = input(title="Max of Lookback Range", defval=60)
+rangeLower = input(title="Min of Lookback Range", defval=5)
+plotBull = input(title="Plot Bullish", defval=true)
+plotHiddenBull = input(title="Plot Hidden Bullish", defval=false)
+plotBear = input(title="Plot Bearish", defval=true)
+plotHiddenBear = input(title="Plot Hidden Bearish", defval=false)
+bearColor = color.red
+bullColor = color.green
+hiddenBullColor = color.new(color.green, 80)
+hiddenBearColor = color.new(color.red, 80)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+osc = rsi(src, len)
+
+// // plot(osc, title="RSI", linewidth=2, color=#8D1699)
+// hline(50, title="Middle Line", linewidth=2, linestyle=hline.style_dotted)
+// obLevel = hline(70, title="Overbought", linewidth=2, linestyle=hline.style_dotted)
+// osLevel = hline(30, title="Oversold", linewidth=2, linestyle=hline.style_dotted)
+
+plFound = na(pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(pivothigh(osc, lbL, lbR)) ? false : true
+_inRange(cond) =>
+	bars = barssince(cond == true)
+	rangeLower <= bars and bars <= rangeUpper
+
+
+//------------------------------------------------------------------------------
+// Regular Bullish
+// Osc: Higher Low
+
+oscHL = osc[lbR] > valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Lower Low
+
+priceLL = bull_src[lbR] < valuewhen(plFound, bull_src[lbR], 1)
+bullCond = plotBull and priceLL and oscHL and plFound
+
+plot(
+     plFound ? osc[lbR] : na,
+     offset=-lbR,
+     title="Regular Bullish",
+     linewidth=2,
+     color=(bullCond ? bullColor : noneColor),
+     transp=0
+     )
+
+plotshape(
+	 bullCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bullish Label",
+	 text=" Bull ",
+	 style=shape.labelup,
+	 location=location.absolute,
+	 color=bullColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+//------------------------------------------------------------------------------
+// Hidden Bullish
+// Osc: Lower Low
+
+oscLL = osc[lbR] < valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Higher Low
+
+priceHL = bull_src[lbR] > valuewhen(plFound, bull_src[lbR], 1)
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound
+
+plot(
+	 plFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bullish",
+	 linewidth=2,
+	 color=(hiddenBullCond ? hiddenBullColor : noneColor),
+	 transp=0
+	 )
+
+plotshape(
+	 hiddenBullCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bullish Label",
+	 text=" H Bull ",
+	 style=shape.labelup,
+	 location=location.absolute,
+	 color=bullColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+//------------------------------------------------------------------------------
+// Regular Bearish
+// Osc: Lower High
+
+oscLH = osc[lbR] < valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Higher High
+
+priceHH = bear_src[lbR] > valuewhen(phFound, bear_src[lbR], 1)
+
+bearCond = plotBear and priceHH and oscLH and phFound
+
+plot(
+	 phFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bearish",
+	 linewidth=2,
+	 color=(bearCond ? bearColor : noneColor),
+	 transp=0
+	 )
+
+plotshape(
+	 bearCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bearish Label",
+	 text=" Bear ",
+	 style=shape.labeldown,
+	 location=location.absolute,
+	 color=bearColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+//------------------------------------------------------------------------------
+// Hidden Bearish
+// Osc: Higher High
+
+oscHH = osc[lbR] > valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Lower High
+
+priceLH = bear_src[lbR] < valuewhen(phFound, bear_src[lbR], 1)
+
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound
+
+plot(
+	 phFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bearish",
+	 linewidth=2,
+	 color=(hiddenBearCond ? hiddenBearColor : noneColor),
+	 transp=0
+	 )
+
+plotshape(
+	 hiddenBearCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bearish Label",
+	 text=" H Bear ",
+	 style=shape.labeldown,
+	 location=location.absolute,
+	 color=bearColor,
+	 textcolor=textColor,
+	 transp=0
+	 )
+
+
+///TDI /w MFI
+
+//Inputs
+
+// === TIMEFRAME OPTIONS
+
+o_htf_type1 = "Manual HTF"
+o_htf_type2 = "Dynamic HTF"
+i_htf_type = input(o_htf_type1, group = "Timeframes", title = "HTF Type", type = input.string, options = [o_htf_type1, o_htf_type2])
+
+i_dynamic_factor = input(15, group = "Timeframes", title = "Dynamic HTF Factor", type = input.integer, minval = 1)
+i_manual_res = input("", group = "Timeframes", title = "Manual HTF", type = input.resolution)
+i_high_res = input(false, group = "Timeframes", title = "High Resolution", type = input.bool, tooltip = "Plot for current TF, scaled to HTF. Must use Dynamic HTF")
+i_no_repaint = input(true, group = "Timeframes", title = "No Repaint Mode", type = input.bool, tooltip = "It will not plot until candle close on HTF")
+
+// === CORE OPTIONS
+i_rsi_length = input(21, group = "Core", title = "RSI Length", minval = 1, type = input.integer)
+i_rsi_length_hr = i_rsi_length * i_dynamic_factor
+i_bb_length = input(34, group = "Core", title = "BB Length", minval = 1, type = input.integer)
+i_bb_length_hr = i_bb_length * i_dynamic_factor
+i_bb_multiple = input(1.6185, group = "Core", title = "BB Multiple", minval = 0.5, type = input.float, tooltip = "Standard deviation multiplier")
+i_slowma_length = input(9, group = "Core", title = "Slow MA", minval = 1, type = input.integer)
+i_slowma_length_hr = i_slowma_length * i_dynamic_factor
+i_fastma_length = input(1, group = "Core", title = "Fast MA", minval = 1, type = input.integer)
+i_fastma_length_hr = i_fastma_length * i_dynamic_factor
+
+i_ma = input(o_ema, group = "Core", title = "Moving Average Type", type = input.string, options = [o_sma, o_ema], tooltip = "Used on the Oscillator and Bollinger Band")
+
+o_rsi = "RSI"
+o_mfi = "MFI"
+i_osc = input(o_mfi, group = "Core", title = "Oscillator Type", type = input.string, options = [o_rsi, o_mfi])
+
+
+//Code and Signals
+
+// === LIBRARY FUNCTIONS
+
+// === PineCoders MTF Framework
+f_resInMinutes() => _resInMinutes = timeframe.multiplier * (timeframe.isseconds ? 1. / 60. : timeframe.isminutes ? 1. : timeframe.isdaily ? 1440. : timeframe.isweekly ? 10080. : timeframe.ismonthly ? 43800. : na)
+f_tfResInMinutes(_resolution) => security(syminfo.tickerid, _resolution, f_resInMinutes())
+f_resNextStep(_res) => _res <= 1 ? "15" : _res <= 5 ? "60"  : _res <= 30 ? "240" : _res <= 60 ? "1D" : _res <= 360 ? "3D" : _res <= 1440 ? "1W" : _res <= 10080 ? "1M" : "12M"
+f_multipleOfRes(_res, _mult) => _targetResInMin = _res * max(_mult, 1), _targetResInMin <= 0.083 ? "5S" : _targetResInMin <= 0.251 ? "15S" : _targetResInMin <= 0.501 ? "30S" : _targetResInMin <= 1440 ? tostring(round(_targetResInMin)) : _targetResInMin <= 43800 ? tostring(round(min(_targetResInMin / 1440, 365))) + "D" : tostring(round(min(_targetResInMin / 43800, 12))) + "M"
+f_resFromMinutes(_minutes) => _minutes <= 0.0167 ? "1S" : _minutes <= 0.0834 ? "5S" : _minutes <= 0.2500 ? "15S" : _minutes <= 0.5000 ? "30S" : _minutes <= 1440 ? tostring(round(_minutes)) : _minutes <= 43800 ? tostring(round(min(_minutes / 1440, 365))) + "D" : tostring(round(min(_minutes / 43800, 12))) + "M"
+f_theoreticalDilationOf(_res) => f_tfResInMinutes(_res) / f_resInMinutes()
+f_avgDilationOf(_res) => b = barssince(change(time(_res))), cumTotal = cum(b == 0 ? b[1] + 1 : 0), cumCount = cum(b == 0 ? 1 : 0), cumTotal / cumCount
+
+// === Custom Functions
+f_no_repaint(_src) => _src[barstate.isrealtime ? 1 : 0]
+f_ma(_src, _len) => i_ma == o_ema ? ema(_src, _len) : sma(_src, _len)
+f_osc(_src, _len) => i_osc == o_mfi ? mfi(_src, _len) : rsi(_src, _len)
+
+// ===================
+// === CALCULATIONS ==
+// ===================
+
+// not using all of the functions for fewer security() calls
+_tf_mins = f_resInMinutes()
+//_dynamic_htf_mins = _tf_mins * i_dynamic_factor
+_dynamic_htf_res = f_multipleOfRes(_tf_mins, i_dynamic_factor) // f_resFromMinutes(_dynamic_htf_mins)
+//_dynamic_htf_mins = f_tfResInMinutes(_dynamic_htf_res)
+
+htf = i_htf_type == o_htf_type2 ? _dynamic_htf_res : i_manual_res
+htf_mins = f_tfResInMinutes(htf)
+
+src_mfi = i_no_repaint ? f_no_repaint(close) : close
+use_high_res = i_htf_type == o_htf_type2 and i_high_res
+
+exec_tf = use_high_res ? timeframe.period : htf
+rsilen = use_high_res ? i_rsi_length_hr : i_rsi_length
+falen = use_high_res ? i_fastma_length_hr : i_fastma_length
+salen = use_high_res ? i_slowma_length_hr : i_slowma_length
+bblen = use_high_res ? i_bb_length_hr : i_bb_length
+
+f_core() =>
+    _osc = f_osc(src_mfi, rsilen)
+    _fa = f_ma(_osc, falen)
+    _sa = f_ma(_osc, salen)
+    [_bb_mid, _bb_upper, _bb_lower] = bb(_osc, bblen, i_bb_multiple)
+    [_osc, _fa, _sa, _bb_mid, _bb_upper, _bb_lower]
+
+[osc_mfi, fa, sa, bb_mid, bb_upper, bb_lower] = security(syminfo.tickerid, exec_tf, f_core(), barmerge.gaps_off, barmerge.lookahead_on)
+
+c_yellow = #ffd33c
+c_magenta = #e91e63
+c_blue = #2196f3
+
+	 
+///CONNECTIONS
+
+ema_50 = ema(close, 50)
+
+var tdi_filter_low = false
+var tdi_filter_high = false
+
+var snowflake_low = false
+var snowflake_high = false
+
+lower_band_cross = crossunder(mab, bdn)
+upper_band_cross = crossover(mab, bup)
+lower_band_crossback = crossover(mab, bdn)
+upper_band_crossback = crossunder(mab, bup)
+
+pivot_high = na(pivothigh(1, 0)) ? false : true
+pivot_low = na(pivotlow(1, 0)) ? false : true
+
+tdirsi_long_signal = tdi_filter_low and snowflake_low and (long_above_mid ? true : mab < mid) and (long_above_50 ? true : ema50_source_up < ema_50) and (mab - mbb) > tdi_cross_buffer
+tdirsi_short_signal = tdi_filter_high and snowflake_high and (short_below_mid ? true : mab > mid) and (short_below_50 ? true : ema50_source_down > ema_50) and (mbb - mab) > tdi_cross_buffer
+
+//signal_cancel_long = ((tdi_cross_filter ? tdi_filter_low and (mab > bdn)[1] and pivot_high : lower_band_cross) or tdirsi_long_signal or mab > mid)
+//signal_cancel_short = ((tdi_cross_filter ? tdi_filter_high and (mab < bup)[1] and pivot_low : upper_band_cross) or tdirsi_short_signal or mab < mid)
+
+tdi_filter_low := lower_band_cross ? true : ((tdi_cross_filter ? tdi_filter_low and (mab > bdn)[1] and pivot_high : lower_band_cross) or tdirsi_long_signal or mab > mid) ? false : tdi_filter_low
+tdi_filter_high := upper_band_cross ? true : ((tdi_cross_filter ? tdi_filter_high and (mab < bup)[1] and pivot_low : upper_band_cross) or tdirsi_short_signal or mab < mid) ? false : tdi_filter_high
+
+snowflake_low := snowflakes_filter == o_none ? true :
+                 snowflakes_filter == o_purple ? crossunder(mab, mbb) or (snowflake_low[1] ? lower_band_cross : false) ? false : flow_down4 and mab < bdn ? true : snowflake_low :
+                 crossunder(mab, mbb) or (snowflake_low[1] ? lower_band_cross : false) ? false : flow_down3 or flow_down4 ? true : snowflake_low
+
+snowflake_high := snowflakes_filter == o_none ? true :
+                 snowflakes_filter == o_purple ? crossover(mab, mbb) or (snowflake_high[1] ? upper_band_cross : false) ? false : flow_up4 ? true : snowflake_high :
+                 crossover(mab, mbb) or (snowflake_high[1] ? upper_band_cross : false) ? false : flow_up3 or flow_up4 ? true : snowflake_high
+
+///EXECUTION
+
+var long_inactive = true
+var short_inactive = true
+
+var entry_price = 0.
+
+var atr = 0.
+
+atr_period = atr(14)
+
+//Long
+
+plotshape(tdirsi_long_signal, style=shape.labelup, location=location.bottom, color=color.lime, size=size.tiny, editable=true)
+
+if (tdirsi_long_signal and long_inactive)
+    strategy.entry("Long", strategy.long, comment="Long")
+    long_inactive := false
+    entry_price := close
+    atr := atr_period*atr_multiplier
+    if (instant_sl)
+        strategy.exit("Long", comment="Long SL", stop = entry_price - atr)
+    
+price_above_ema50 = ema50_source_up > ema_50
+
+long_sl = atr_source_down < (entry_price - atr)
+
+atr_long_exit = atr_exit_check ? atr_source_up > (entry_price + atr) : false 
+
+long_exit =  exit_condition == o_bcs_ema ? upper_band_cross or price_above_ema50 :
+             exit_condition == o_bcb_ema ? upper_band_crossback or price_above_ema50 :
+             exit_condition == o_bcs ? upper_band_cross :
+             exit_condition == o_bcb ? upper_band_crossback :
+             price_above_ema50
+
+if ((long_exit or atr_long_exit) and short_inactive)
+    strategy.close("Long", comment="Long Exit")
+    long_inactive := true
+    
+if (long_sl)
+    long_inactive := true
+    if (instant_sl == false)
+        strategy.close("Long", comment="Long SL")
+
+//Short
+
+plotshape(tdirsi_short_signal, style=shape.labeldown, location=location.top, color=color.red, size=size.tiny, editable=true)
+
+if (tdirsi_short_signal and short_inactive)
+    strategy.entry("Short", strategy.short, comment="Short")
+    short_inactive := false
+    entry_price := close
+    atr := atr_period*atr_multiplier
+    if (instant_sl)
+        strategy.exit("Short", comment="Short SL", stop = entry_price + atr)
+    
+price_below_ema50 = ema50_source_down < ema_50
+
+short_sl = atr_source_up > (entry_price + atr)
+
+atr_short_exit = atr_exit_check ? atr_source_down < (entry_price - atr) : false 
+
+short_exit = exit_condition == o_bcs_ema ? lower_band_cross or price_below_ema50 :
+             exit_condition == o_bcb_ema ? lower_band_crossback or price_below_ema50 :
+             exit_condition == o_bcs ? lower_band_cross :
+             exit_condition == o_bcb ? lower_band_crossback :
+             price_below_ema50
+
+if ((short_exit or atr_short_exit) and long_inactive)
+    strategy.close("Short", comment="Short Exit")
+    short_inactive := true
+    
+if (short_sl)
+    short_inactive := true
+    if (instant_sl == false)
+        strategy.close("Short", comment="Short SL")
